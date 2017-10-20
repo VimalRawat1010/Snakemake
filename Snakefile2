@@ -1,0 +1,152 @@
+"""
+Author: V. Rawat
+Affiliation: UZH
+Aim: A simple Snakemake workflow to process paired-end illumina reads BS-seq analysis.
+Date: 
+Run: snakemake   -s <Snakefile>   
+Version 0.0.2
+Latest modification: 22.08.2017 
+
+"""
+
+
+def message(msg):
+    print (msg)
+
+################################################################################
+
+#localrules:trimming,final
+
+##--------------------------------------------------------------------------------------##
+## The list of samples to be processed
+##--------------------------------------------------------------------------------------##
+
+SAMPLES, = glob_wildcards("RAW_DATA/20170221.{smp}_R1.fastq.gz")
+NB_SAMPLES = len(SAMPLES)
+for smp in SAMPLES:
+  message("Sample " + smp + " will be processed")
+
+
+### Rule 0
+rule final: 
+  input: expand("{smp}.MethylKit", smp=SAMPLES)
+
+
+
+### Rule1
+rule trimming:
+  input:  fwd="RAW_DATA/20170221.{smp}_R1.fastq.gz", rev="RAW_DATA/20170221.{smp}_R2.fastq.gz"
+  output: fwd="trimmed/20170221.{smp}_R1_val_1.fq.gz", 
+          rev="trimmed/20170221.{smp}_R2_val_2.fq.gz", 
+  message: """--- Trimming."""
+  shell: """
+        trim_galore  --paired  -o trimmed --no_report_file   -q 26  {input.fwd} {input.rev}    &> {input.fwd}.log    
+  """
+
+### Rule2
+rule fastqc:
+  input:  fwd="trimmed/20170221.{smp}_R1_val_1.fq.gz",
+          rev="trimmed/20170221.{smp}_R2_val_2.fq.gz"
+  output: fwd="fastqc/20170221.{smp}_R1_t.fq_fastqc.zip", rev="Aphid/fastqc/20170221.{smp}_R2_t.fq_fastqc.zip"
+  message: """--- Quality check of raw data with Fastqc."""
+  shell: """                                                                
+              /home/ubuntu/FastQC/fastqc  --outdir  fastqc/ --extract  -f fastq {input.fwd} {input.rev}
+         """
+
+### Rule3
+rule bismark:
+        input:fwd="trimmed/20170221.{smp}_R1_val_1.fq.gz", 
+              rev="trimmed/20170221.{smp}_R2_val_2.fq.gz"
+        params:  index="Wei_Genome/"
+        output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.bam"
+        shell: """
+               
+                 ../../bismark_v0.15.0/bismark  \
+                        -o  Mapping/BAM/    \
+                        --fastq                        \
+                        -n 1                           \
+                        --multicore 1                  \
+                        --bowtie2                      \
+                        {params.index}                 \
+                        -1  {input.fwd}  -2 {input.rev}
+                """
+######################
+
+##### Rule 4:
+rule deduplication:
+      input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.bam"
+               #Mapping_imputed/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.bam
+      output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam"
+      shell:  """
+                 perl deduplicate_bismark_alignment_output.pl -p -bam {input} 
+              """
+
+##### Rule 4.1:
+
+rule sortingBam:
+      input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam"
+      output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam"
+      shell:  """
+                 samtools sort {input} {input}
+              """
+
+##### Rule 5:
+#rule MethylationExtraction:
+#      input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.bam" 
+#      output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam_CpG.methylKit"
+#
+#      shell:  """
+#                 MethylDackel/MethylDackel extract -d 5 -D 500  --methylKit --CHH --CHG Wei_Genome/pseudo6979.fasta  {input}
+#                 MethylDackel/MethylDackel mbias  Wei_Genome/pseudo6979.fasta  {input} {smp}
+#              """
+
+##### Rule 5:
+#rule MethylationExtraction:
+#      input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam" 
+#      output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam_CpG.methylKit"
+#
+#      shell:  """
+#                 MethylDackel/MethylDackel extract -d 5 -D 500  --methylKit --CHH --CHG Aphid/Wei_Genome/TAIR10.fa  {input}
+#                 MethylDackel/MethylDackel mbias  Wei_Genome/TAIR10.fa  {input} {smp}
+#              """
+
+
+#Mapping_imputed/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted_CpG.methylKit
+#rule moving_deduplicated_bam:
+#       input:  "/home/ubuntu/data/5TB/Aphid/bismark_output/bam/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam"
+#       output: "/home/ubuntu/data/5TB/Aphid/deduplicated_bam/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam"
+#       shell:  """
+#                   mv /home/ubuntu/data/5TB/Aphid/bismark_output/bam/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam  /home/ubuntu/data/5TB/Aphid/deduplicated_bam/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam
+#		"""
+
+
+rule bismark_methylation_extraction:
+        input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam"
+        output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam.bismark.cov.gz"
+        shell: """
+                        /home/ubuntu/bismark_v0.15.0/bismark_methylation_extractor --multicore 1  -p --no_overlap  --bedGraph  --no_overlap --report  --comprehensive  -o  Mapping/BAM/   --CX   --buffer_size 20G {input} > Mapping/BAM/{smp}.meth
+               """
+
+### Rule6.1
+rule extracting_gz:
+  	input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam.bismark.cov.gz"
+  	output: "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam.bismark.cov"    
+ 	message: """--- Converting....."""
+  	shell: """
+     		gzip -d {input}
+ 		 """
+
+
+### Rule.26
+rule MethylKit_input:
+  input:  "Mapping/BAM/20170221.{smp}_R1_val_1.fq.gz_bismark_bt2_pe.deduplicated.bam.sorted.bam.bismark.cov"
+  output: "{smp}.MethylKit" 
+           
+  message: """--- Converting....."""
+  shell: """
+      awk  -F "\\t" '{{coverage = $4+$5;if($3=="+"){{ $3 = "F"}}; if($3=="-"){{ $3 = "R"  }} if(coverage > 5) {{ meth= ($4*100)/coverage; unmeth =($5*100)/coverage;   print $1 "." $2 "\t" $1 "\t" $2 "\t" $3 "\t" coverage "\t"  meth  "\t" unmeth }}}}' {input} >{output}
+            
+  	"""
+
+
+
